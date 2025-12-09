@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: "Missing pincode" });
   }
 
-  // Basic India-only guard (6-digit pincode)
+  // India-only simple check
   if (!/^[0-9]{6}$/.test(pincode)) {
     return res.status(200).json({
       ok: false,
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
     const apiKey = process.env.DELHIVERY_API_KEY;
     const pickup = process.env.PICKUP_PINCODE;
 
-    // STEP 1: Check serviceability
+    // 1) Check serviceability
     const serviceUrl = `https://track.delhivery.com/c/api/pin-codes/json/?filter_codes=${pincode}&token=${apiKey}`;
     const serviceRes = await fetch(serviceUrl);
     const service = await serviceRes.json();
@@ -35,19 +35,19 @@ export default async function handler(req, res) {
       });
     }
 
-    // STEP 2: SLA / transit time
+    // 2) Get transit days (tat) from SLA API
     const slaUrl = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?token=${apiKey}&md=1&ss=1&o_pin=${pickup}&d_pin=${pincode}&cgm=1`;
     const slaRes = await fetch(slaUrl);
     const sla = await slaRes.json();
 
-    // Delhivery may return ETD / transit days in different fields – we use a fallback
+    // Try multiple possible fields; fallback 4
     const tatRaw =
       sla?.delivery_details?.[0]?.etd ||
       sla?.delivery_details?.[0]?.estimated_delivery_days ||
       4;
     const tat = Number(tatRaw) || 4;
 
-    // STEP 3: Calculate dispatch date with 7 PM cutoff (IST)
+    // 3) Dispatch date with 7 PM IST cutoff
     const now = new Date();
     const istNow = new Date(
       now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
@@ -56,27 +56,33 @@ export default async function handler(req, res) {
 
     let dispatchDate = new Date(istNow);
     if (hour >= 19) {
-      // after 7 PM IST → dispatch next day
+      // after 7 PM → dispatch next day
       dispatchDate.setDate(dispatchDate.getDate() + 1);
     }
-    // normalise time to midnight for clean date
     dispatchDate.setHours(0, 0, 0, 0);
 
-    // STEP 4: EDD = dispatchDate + tat days
-    const etaDate = new Date(dispatchDate);
-    etaDate.setDate(etaDate.getDate() + tat);
+    // 4) Base ETA date = dispatch + tat
+    const baseEta = new Date(dispatchDate);
+    baseEta.setDate(baseEta.getDate() + tat);
 
-    const dispatchStr = dispatchDate.toISOString().split("T")[0]; // YYYY-MM-DD
-    const etaStr = etaDate.toISOString().split("T")[0];
+    // 5) Display range = baseEta + 1 to baseEta + 2
+    const rangeStart = new Date(baseEta);
+    rangeStart.setDate(rangeStart.getDate() + 1);
+
+    const rangeEnd = new Date(baseEta);
+    rangeEnd.setDate(rangeEnd.getDate() + 2);
+
+    const fmt = (d) => d.toISOString().split("T")[0]; // YYYY-MM-DD
 
     return res.status(200).json({
       ok: true,
       pincode,
       tat,
-      dispatchDate: dispatchStr,
-      estimatedDate: etaStr,
-      message: `Estimated delivery by ${etaStr}`,
-      note: "Orders placed before 7 PM IST are dispatched same day. Orders after 7 PM dispatch next working day."
+      dispatchDate: fmt(dispatchDate),
+      baseEtaDate: fmt(baseEta),
+      rangeStartDate: fmt(rangeStart),
+      rangeEndDate: fmt(rangeEnd),
+      message: `Estimated delivery between ${fmt(rangeStart)} and ${fmt(rangeEnd)}`
     });
 
   } catch (err) {

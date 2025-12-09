@@ -1,0 +1,9 @@
+{
+  "name": "timeluxe-delivery-edd2",
+  "version": "1.0.0",
+  "description": "Delivery date API for Timeluxe",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}

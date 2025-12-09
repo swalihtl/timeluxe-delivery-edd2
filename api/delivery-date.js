@@ -12,23 +12,29 @@ export default async function handler(req, res) {
     const apiKey = process.env.DELHIVERY_API_KEY;
     const pickup = process.env.PICKUP_PINCODE;
 
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?token=${apiKey}&md=1&ss=1&d_pin=${pincode}&o_pin=${pickup}&cgm=0.5`;
+    const url = `https://track.delhivery.com/api/cmu/pincode-stats/?token=${apiKey}&origin=${pickup}&destination=${pincode}`;
 
     const response = await fetch(url);
     const data = await response.json();
 
-    if (!data?.estimated_delivery_date) {
+    if (!data?.data || !data?.data?.eta) {
       return res.status(200).json({
         ok: false,
-        message: "Delivery not available to this pincode"
+        message: "Delivery not available"
       });
     }
 
-    const formatted = data.estimated_delivery_date; // YYYY-MM-DD format returned by Delhivery
+    const etaDays = Number(data.data.eta); // transit days from Delhivery
+    const today = new Date();
+    const estimated = new Date(today);
+    estimated.setDate(today.getDate() + etaDays);
+
+    const formatted = estimated.toISOString().split("T")[0];
 
     return res.status(200).json({
       ok: true,
       pincode,
+      tat: etaDays,
       estimatedDate: formatted,
       message: `Estimated delivery by ${formatted}`
     });
@@ -36,10 +42,7 @@ export default async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({
       ok: false,
-      error: "Server error",
-      details: err.message
+      error: err.message
     });
   }
 }
-
-

@@ -1,115 +1,60 @@
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.status(200).end();
 
   const { pincode } = req.query;
-  if (!pincode || !/^[0-9]{6}$/.test(pincode)) {
-    return res.status(400).json({ ok: false, message: "Invalid pincode" });
+  if (!pincode) {
+    return res.status(400).json({ ok: false, message: "Pincode required" });
   }
 
   try {
     const token = process.env.DELHIVERY_API_KEY;
-    const pickup = process.env.PICKUP_PINCODE;
+    const origin = process.env.PICKUP_PINCODE;
 
-    if (!token || !pickup) {
-      return res.status(500).json({
-        ok: false,
-        message: "Server misconfiguration"
-      });
-    }
+    const url =
+      `https://track.delhivery.com/api/dc/expected_tat` +
+      `?origin_pin=${origin}` +
+      `&destination_pin=${pincode}` +
+      `&mot=S`;
 
-    /* 1️⃣ Serviceability check */
-    const serviceRes = await fetch(
-      `https://track.delhivery.com/c/api/pin-codes/json/?filter_codes=${pincode}`,
-      {
-        headers: {
-          "Authorization": `Token ${token}`
-        }
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": `Token ${token}`,
+        "Accept": "application/json"
       }
-    );
+    });
 
-    const serviceText = await serviceRes.text();
-    if (!serviceText.startsWith("{")) {
-      return res.json({
-        ok: false,
-        message: "Delhivery serviceability error"
-      });
+    const data = await r.json();
+
+    if (!data || !data.expected_tat) {
+      return res.json({ ok: false, message: "Delivery not available" });
     }
 
-    const service = JSON.parse(serviceText);
-    if (!service?.delivery_codes?.length) {
-      return res.json({
-        ok: false,
-        message: "Delivery not available to this pincode"
-      });
+    const tat = Number(data.expected_tat);
+
+    // Dispatch logic
+    const now = new Date();
+    let dispatchDate = new Date(now);
+    if (now.getHours() >= 18) {
+      dispatchDate.setDate(dispatchDate.getDate() + 1);
     }
 
-    /* 2️⃣ Dynamic SLA / ETA */
-    const slaRes = await fetch(
-      `https://track.delhivery.com/api/cmu/pincode-stats/?origin=${pickup}&destination=${pincode}`,
-      {
-        headers: {
-          "Authorization": `Token ${token}`,
-          "Accept": "application/json"
-        }
-      }
-    );
+    const fromDate = new Date(dispatchDate);
+    fromDate.setDate(fromDate.getDate() + tat - 1);
 
-    const slaText = await slaRes.text();
-    if (!slaText.startsWith("{")) {
-      return res.json({
-        ok: false,
-        message: "Delhivery SLA API not enabled for this account"
-      });
-    }
+    const toDate = new Date(dispatchDate);
+    toDate.setDate(toDate.getDate() + tat);
 
-    const sla = JSON.parse(slaText);
-
-    // ⚠️ This field name may vary per account
-    const tat =
-      sla?.data?.tat ??
-      sla?.tat ??
-      sla?.data?.[0]?.tat;
-
-    if (!tat) {
-      return res.json({
-        ok: false,
-        message: "Unable to determine delivery time"
-      });
-    }
-
-    /* 3️⃣ Dispatch logic (6 PM IST) */
-    const istNow = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-    );
-
-    let dispatch = new Date(istNow);
-    if (istNow.getHours() >= 18) {
-      dispatch.setDate(dispatch.getDate() + 1);
-    }
-    dispatch.setHours(0, 0, 0, 0);
-
-    /* 4️⃣ Final EDD */
-    const edd = new Date(dispatch);
-    edd.setDate(edd.getDate() + Number(tat));
-
-    const fmt = d => d.toISOString().split("T")[0];
+    const format = d =>
+      d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 
     return res.json({
       ok: true,
       pincode,
-      dispatchDate: fmt(dispatch),
-      estimatedDeliveryDate: fmt(edd),
-      source: "delhivery-dynamic"
+      tat,
+      delivery_range: `${format(fromDate)} - ${format(toDate)}`
     });
 
-  } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      message: "Unexpected server error",
-      error: err.message
-    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, message: "Server error" });
   }
 }

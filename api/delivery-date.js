@@ -62,10 +62,15 @@ export default async function handler(req, res) {
       source: "delhivery-dynamic"
     });
 
-  } catch (err) {
-    return res.status(500).json({ ok: false, message: "Server error" });
-  }
+ } catch (err) {
+  return res.status(500).json({
+    ok: false,
+    message: "Server error",
+    error: err.message,
+    stack: err.stack
+  });
 }
+
 
 
 
